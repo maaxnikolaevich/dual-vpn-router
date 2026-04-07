@@ -1,219 +1,219 @@
 # dual-vpn-router
 
-Manage two VPN connections simultaneously on Linux through (Policy Based Routing).
+Управление двумя VPN-соединениями одновременно на Linux с помощью Policy Based Routing.
 
-## Features
+## Возможности
 
-- ✅ **Split DNS** - Route DNS queries through different servers based on domain
-- ✅ **Policy Based Routing** - Route traffic through different VPN connections
-- ✅ **Auto-detection** - Automatically detect VPN interfaces
-- ✅ **Easy CLI** - Simple command-line interface
-- ✅ **YAML Config** - Human-readable configuration
+- ✅ **Разделение DNS** — маршрутизация DNS-запросов через разные серверы в зависимости от домена
+- ✅ **Маршрутизация по политикам (PBR)** — маршрутизация трафика через разные VPN-соединения
+- ✅ **Автоопределение** — автоматическое определение VPN-интерфейсов
+- ✅ **Простой CLI** — удобный интерфейс командной строки
+- ✅ **YAML-конфигурация** — человекочитаемый формат конфигурации
 
-## Problem Solved
+## Решаемая проблема
 
-This tool solves the problem of using a corporate VPN and a personal VPN for bypassing internet restrictions at the same time. Perfect for:
+Этот инструмент решает проблему одновременного использования корпоративного VPN и личного VPN для обхода интернет-ограничений. Идеально подходит для:
 
-- Remote workers who need access to corporate resources
-- Users in regions with internet restrictions
-- Anyone needing simultaneous VPN connections
+- Удалённых сотрудников, которым нужен доступ к корпоративным ресурсам
+- Пользователей в регионах с интернет-ограничениями
+- Любых случаев, когда нужны одновременные VPN-соединения
 
-## Installation
+## Установка
 
 ```bash
-# Clone the repository
+# Клонируйте репозиторий
 git clone https://github.com/maks/dual-vpn-router.git
 cd dual-vpn-router
 
-# Install deps
+# Установите зависимости
 go mod tidy
 
-# Build
+# Сборка
 go build -o dual-vpn ./cmd
 
-# Install (optional)
+# Установка (опционально)
 sudo cp dual-vpn /usr/local/bin/
 sudo chmod +x /usr/local/bin/dual-vpn
 ```
 
-## Quick Start
+## Быстрый старт
 
 ```bash
-# 1. Initialize configuration
+# 1. Инициализация конфигурации
 sudo dual-vpn init
 
-# 2. Edit configuration to match your VPN setup
+# 2. Отредактируйте конфигурацию под ваши VPN
 sudo nano /etc/dual-vpn/config.yaml
 
-# 3. Connect your VPNs (use your VPN client first!)
-#    - Corporate VPN connection
-#    - Global VPN connection
-#    Make sure BOTH VPNs are connected before proceeding!
+# 3. Подключите ваши VPN (сначала используйте ваш VPN-клиент!)
+#    - Корпоративное VPN-соединение
+#    - Глобальное VPN-соединение
+#    Убедитесь, что ОБА VPN подключены перед продолжением!
 
-# 4. Setup routing
+# 4. Настройка маршрутизации
 sudo dual-vpn setup
 
-# 5. Check status
+# 5. Проверка статуса
 dual-vpn status
 
-# 6. Cleanup when done (or disconnect VPNs)
+# 6. Очистка при завершении (или отключении VPN)
 sudo dual-vpn cleanup
 ```
 
-## Important: VPN Connection Order
+## Важно: Порядок подключения VPN
 
-### Starting Up (Correct Order)
-1. **Connect your VPNs first** using your VPN client (WireGuard, OpenVPN, etc.)
-   - Connect corporate VPN
-   - Connect global VPN
-2. **Verify both VPNs are up** (check with `sudo dual-vpn status`)
-3. **Then run `sudo dual-vpn setup`**
+### Запуск (правильный порядок)
+1. **Сначала подключите ваши VPN** через ваш VPN-клиент (WireGuard, OpenVPN и т.д.)
+   - Подключите корпоративный VPN
+   - Подключите глобальный VPN
+2. **Убедитесь, что оба VPN активны** (проверьте через `sudo dual-vpn status`)
+3. **Затем выполните `sudo dual-vpn setup`**
 
-### Shutting Down (Correct Order)
-1. **Run `sudo dual-vpn cleanup` first**
-   - This restores DNS to original state
-   - This removes all routing rules
-2. **Then disconnect your VPNs** using your VPN client
+### Завершение работы (правильный порядок)
+1. **Сначала выполните `sudo dual-vpn cleanup`**
+   - Это восстановит DNS в исходное состояние
+   - Это удалит все правила маршрутизации
+2. **Затем отключите ваши VPN** через ваш VPN-клиент
 
-### Why This Order Matters
+### Почему этот порядок важен
 
-The script creates temporary DNS and routing configurations. If you disconnect VPNs **before** running cleanup:
+Скрипт создаёт временные конфигурации DNS и маршрутизации. Если вы отключите VPN **до** выполнения cleanup:
 
-- DNS queries may fail (pointing to VPN DNS servers that are no longer reachable)
-- Routing rules may remain active (pointing to disconnected VPN interfaces)
-- Network may be in inconsistent state
+- DNS-запросы могут завершиться ошибкой (указывают на DNS-серверы VPN, которые недоступны)
+- Правила маршрутизации могут оставаться активными (указывают на отключённые VPN-интерфейсы)
+- Сеть может находиться в несогласованном состоянии
 
-**Always run `cleanup` BEFORE disconnecting VPNs!**
+**Всегда выполняйте `cleanup` ПЕРЕД отключением VPN!**
 
-## Configuration
+## Конфигурация
 
-**IMPORTANT**: You must manually edit the configuration file with your actual corporate DNS servers, domains, and network ranges. The default configuration contains placeholder values.
+**ВАЖНО**: Вы должны вручную отредактировать файл конфигурации с вашими реальными корпоративными DNS-серверами, доменами и сетевыми диапазонами. Конфигурация по умолчанию содержит значения-заполнители.
 
-Run `sudo dual-vpn init` to create a default config at `/etc/dual-vpn/config.yaml`, then edit it:
+Выполните `sudo dual-vpn init` для создания конфигурации по умолчанию в `/etc/dual-vpn/config.yaml`, затем отредактируйте её:
 
 ```bash
 sudo nano /etc/dual-vpn/config.yaml
 ```
 
-### Required Changes
+### Обязательные изменения
 
-1. **`dns.domains`**: Replace with your corporate domain(s)
-   - `name`: Your corporate domain (e.g., `company.internal`)
-   - `servers`: Your corporate DNS server IP addresses
+1. **`dns.domains`**: Замените на ваш корпоративный домен(ы)
+   - `name`: Ваш корпоративный домен (например, `company.internal`)
+   - `servers`: IP-адреса ваших корпоративных DNS-серверов
 
-2. **`routing.corp_networks`**: Add your corporate network ranges
-   - These networks will be routed through corporate VPN
-   - Common ranges: `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`
+2. **`routing.corp_networks`**: Добавьте корпоративные сетевые диапазоны
+   - Эти сети будут маршрутизироваться через корпоративный VPN
+   - Распространённые диапазоны: `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`
 
-3. **`vpns.interface`**: Check your VPN interface names
-   - Run `ip link show` after connecting VPNs to see interface names
-   - Common names: `tun0`, `wg0`, `ppp0`
+3. **`vpns.interface`**: Проверьте названия ваших VPN-интерфейсов
+   - Выполните `ip link show` после подключения VPN для просмотра имён интерфейсов
+   - Распространённые имена: `tun0`, `wg0`, `ppp0`
 
-### Example Configuration
+### Пример конфигурации
 
 ```yaml
-# ===== YOU MUST CHANGE THESE =====
+# ===== ЭТО НЕОБХОДИМО ИЗМЕНИТЬ =====
 dns:
-    listen_addr: 127.0.0.1:53  # OK: Leave as is
+    listen_addr: 127.0.0.1:53  # ОК: Оставьте как есть
     fallback:
-        - 8.8.8.8               # OK: Leave as is (public DNS)
-        - 8.8.4.4               # OK: Leave as is (public DNS)
+        - 8.8.8.8               # ОК: Оставьте как есть (публичный DNS)
+        - 8.8.4.4               # ОК: Оставьте как есть (публичный DNS)
     domains:
-        - name: corporate.example.com  # CHANGE: Your corporate domain
+        - name: corporate.example.com  # ИЗМЕНИТЕ: Ваш корпоративный домен
           servers:
-            - 192.168.1.1              # CHANGE: Your corporate DNS server IP
-            - 192.168.1.2              # CHANGE: Your corporate DNS server IP (if you have)
+            - 192.168.1.1              # ИЗМЕНИТЕ: IP вашего корпоративного DNS-сервера
+            - 192.168.1.2              # ИЗМЕНИТЕ: IP вашего корпоративного DNS-сервера (если есть)
 
 routing:
-    corp_table_id: 200          # OK: Leave as is
+    corp_table_id: 200          # ОК: Оставьте как есть
     corp_networks:
-        - 10.0.0.0/8            # OK: Keep if your company uses these ranges
-        - 172.16.0.0/12         # OK: Keep if your company uses these ranges
-        - 192.168.0.0/16        # OK: Keep if your company uses these ranges
+        - 10.0.0.0/8            # ОК: Оставьте, если ваша компания использует эти диапазоны
+        - 172.16.0.0/12         # ОК: Оставьте, если ваша компания использует эти диапазоны
+        - 192.168.0.0/16        # ОК: Оставьте, если ваша компания использует эти диапазоны
 
 vpns:
-    - name: corporate           # OK: Leave as is
-      interface: tun0           # CHECK: Run 'ip link show' to verify your interface name
-      auto_detect: true         # OK: Leave as is
-      type: corporate           # OK: Leave as is
-    - name: global              # OK: Leave as is
-      interface: wg0            # CHECK: Run 'ip link show' to verify your interface name
-      auto_detect: true         # OK: Leave as is
-      type: global              # OK: Leave as is
+    - name: corporate           # ОК: Оставьте как есть
+      interface: tun0           # ПРОВЕРЬТЕ: Выполните 'ip link show' для проверки имени интерфейса
+      auto_detect: true         # ОК: Оставьте как есть
+      type: corporate           # ОК: Оставьте как есть
+    - name: global              # ОК: Оставьте как есть
+      interface: wg0            # ПРОВЕРЬТЕ: Выполните 'ip link show' для проверки имени интерфейса
+      auto_detect: true         # ОК: Оставьте как есть
+      type: global              # ОК: Оставьте как есть
 ```
 
-### Configuration Parameters
+### Параметры конфигурации
 
-| Parameter | Description | Example |
+| Параметр | Описание | Пример |
 |-----------|-------------|---------|
-| `dns.listen_addr` | Where dnsmasq listens for DNS queries | `127.0.0.1:53` |
-| `dns.fallback` | Default DNS servers for non-corporate domains | `8.8.8.8` |
-| `dns.domains[].name` | Corporate domain name | `company.internal` |
-| `dns.domains[].servers` | Corporate DNS server IPs | `192.168.1.1` |
-| `routing.corp_table_id` | Routing table ID for corporate traffic | `200` |
-| `routing.corp_networks` | Networks routed through corporate VPN | `10.0.0.0/8` |
-| `vpns[].interface` | VPN interface name | `tun0` |
-| `vpns[].type` | VPN type: `corporate` or `global` | `corporate` |
+| `dns.listen_addr` | Адрес, где dnsmasq слушает DNS-запросы | `127.0.0.1:53` |
+| `dns.fallback` | DNS-серверы по умолчанию для некорпоративных доменов | `8.8.8.8` |
+| `dns.domains[].name` | Имя корпоративного домена | `company.internal` |
+| `dns.domains[].servers` | IP-адреса корпоративных DNS-серверов | `192.168.1.1` |
+| `routing.corp_table_id` | ID таблицы маршрутизации для корпоративного трафика | `200` |
+| `routing.corp_networks` | Сети, маршрутизируемые через корпоративный VPN | `10.0.0.0/8` |
+| `vpns[].interface` | Имя VPN-интерфейса | `tun0` |
+| `vpns[].type` | Тип VPN: `corporate` или `global` | `corporate` |
 
-## How It Works
+## Как это работает
 
-1. **DNS Layer**: Uses dnsmasq to route DNS queries to different servers based on domain
-2. **Routing Layer**: Uses PBR to route traffic through different VPN interfaces
-3. **Auto Setup**: NetworkManager dispatcher for automatic configuration
+1. **Слой DNS**: Использует dnsmasq для маршрутизации DNS-запросов к разным серверам в зависимости от домена
+2. **Слой маршрутизации**: Использует PBR для маршрутизации трафика через разные VPN-интерфейсы
+3. **Автонастройка**: Диспетчер NetworkManager для автоматической конфигурации
 
-## Commands
+## Команды
 
-| Command | Description |
+| Команда | Описание |
 |---------|-------------|
-| `dual-vpn init` | Create default configuration file |
-| `dual-vpn setup` | Set up dual VPN routing (run AFTER VPNs are connected) |
-| `dual-vpn cleanup` | Remove all routing rules and restore DNS (run BEFORE disconnecting VPNs) |
-| `dual-vpn status` | Show current status |
+| `dual-vpn init` | Создать файл конфигурации по умолчанию |
+| `dual-vpn setup` | Настроить двойную VPN-маршрутизацию (выполнить ПОСЛЕ подключения VPN) |
+| `dual-vpn cleanup` | Удалить все правила маршрутизации и восстановить DNS (выполнить ПЕРЕД отключением VPN) |
+| `dual-vpn status` | Показать текущий статус |
 
-## Do I Need to Manually Manage VPN Connections?
+## Нужно ли вручную управлять VPN-соединениями?
 
-**No, the script does NOT manage VPN connections automatically.** You must:
+**Да, скрипт НЕ управляет VPN-соединениями автоматически.** Вы должны:
 
-- **Connect VPNs manually** using your VPN client (NetworkManager, WireGuard, OpenVPN, etc.)
-- **Run `dual-vpn setup`** AFTER both VPNs are connected
-- **Run `dual-vpn cleanup`** BEFORE disconnecting VPNs
+- **Подключать VPN вручную** через ваш VPN-клиент (NetworkManager, WireGuard, OpenVPN и т.д.)
+- **Выполнить `dual-vpn setup`** ПОСЛЕ подключения обоих VPN
+- **Выполнить `dual-vpn cleanup`** ПЕРЕД отключением VPN
 
-The script only manages DNS and routing configuration, not the VPN connections themselves.
+Скрипт управляет только конфигурацией DNS и маршрутизации, а не самими VPN-соединениями.
 
-## Requirements
+## Требования
 
 - Linux (Ubuntu/Debian/Arch)
 - NetworkManager
 - dnsmasq
-- systemd-resolved (optional)
+- systemd-resolved (опционально)
 - iptables/iproute2
 
-## Important Notes
+## Важные примечания
 
-### Configuration is Manual
+### Ручная конфигурация
 
-The `dual-vpn init` command creates a **placeholder configuration**. You **must** edit it manually:
+Команда `dual-vpn init` создаёт **конфигурацию-заготовку**. Вы **обязаны** отредактировать её вручную:
 
 ```bash
 sudo dual-vpn init
 sudo nano /etc/dual-vpn/config.yaml
 ```
 
-Without proper configuration, the routing will not work correctly. Make sure to:
+Без правильной конфигурации маршрутизация не будет работать корректно. Убедитесь, что вы:
 
-1. Set your actual corporate domain(s) in `dns.domains`
-2. Set your corporate DNS server IPs in `dns.domains[].servers`
-3. Add your corporate network ranges in `routing.corp_networks`
-4. Verify VPN interface names match your setup in `vpns[].interface`
+1. Указали ваш реальный корпоративный домен(ы) в `dns.domains`
+2. Указали IP-адреса корпоративных DNS-серверов в `dns.domains[].servers`
+3. Добавили корпоративные сетевые диапазоны в `routing.corp_networks`
+4. Проверили, что имена VPN-интерфейсов соответствуют вашей конфигурации в `vpns[].interface`
 
-## License
+## Лицензия
 
 MIT License
 
-## Contributing
+## Развитие
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Правки и поиск багов приветствуется! Не стесняйтесь отправлять Pull Request.
 
-## Keywords
+## Ключевые слова
 
 linux, vpn, pbr, policy based routing, dual vpn, split routing, подключить два впн одновременно, два впн на одном компьютере, ip routing, dns routing, настройка двух vpn, split dns, политика маршрутизации, два vpn на linux, корпоративный vpn и личный vpn одновременно
