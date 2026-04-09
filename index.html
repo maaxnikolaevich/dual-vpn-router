@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="google-site-verification" content="1MtBtvuKPiN1TkmRLVok3qD3HeqR6wlaQPVjCLXRQUs" />
+    <meta name="yandex-verification" content="bbedf62d3a28820d" />
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+
+<!-- Begin Jekyll SEO tag v2.8.0 -->
+<title>dual-vpn-router | Подключить два впн одновременно / двойной vpn как сделать</title>
+<meta name="generator" content="Jekyll v3.10.0" />
+<meta property="og:title" content="dual-vpn-router" />
+<meta property="og:locale" content="en_US" />
+<meta name="description" content="Подключить два впн одновременно / двойной vpn как сделать" />
+<meta property="og:description" content="Подключить два впн одновременно / двойной vpn как сделать" />
+<link rel="canonical" href="https://maaxnikolaevich.github.io/dual-vpn-router/" />
+<meta property="og:url" content="https://maaxnikolaevich.github.io/dual-vpn-router/" />
+<meta property="og:site_name" content="dual-vpn-router" />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="dual-vpn-router" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebSite","description":"Подключить два впн одновременно / двойной vpn как сделать","headline":"dual-vpn-router","name":"dual-vpn-router","url":"https://maaxnikolaevich.github.io/dual-vpn-router/"}</script>
+<!-- End Jekyll SEO tag -->
+
+    <link rel="stylesheet" href="/dual-vpn-router/assets/css/style.css?v=1943ba098974877f44acf0dc4e956e7f7ebc0c3a">
+    <!-- start custom head snippets, customize with your own _includes/head-custom.html file -->
+
+<!-- Setup Google Analytics -->
+
+
+
+<!-- You can set your favicon here -->
+<!-- link rel="shortcut icon" type="image/x-icon" href="/dual-vpn-router/favicon.ico" -->
+
+<!-- end custom head snippets -->
+</head>
+<body>
+    <div class="container-lg px-3 my-5 markdown-body">
+
+
+      <h1 id="dual-vpn-router">dual-vpn-router</h1>
+
+<p>Manage two VPN connections simultaneously on Linux through (Policy Based Routing).</p>
+
+<h2 id="features">Features</h2>
+
+<ul>
+  <li>✅ <strong>Split DNS</strong> - Route DNS queries through different servers based on domain</li>
+  <li>✅ <strong>Policy Based Routing</strong> - Route traffic through different VPN connections</li>
+  <li>✅ <strong>Auto-detection</strong> - Automatically detect VPN interfaces</li>
+  <li>✅ <strong>Easy CLI</strong> - Simple command-line interface</li>
+  <li>✅ <strong>YAML Config</strong> - Human-readable configuration</li>
+</ul>
+
+<h2 id="problem-solved">Problem Solved</h2>
+
+<p>This tool solves the problem of using a corporate VPN and a personal VPN for bypassing internet restrictions at the same time. Perfect for:</p>
+
+<ul>
+  <li>Remote workers who need access to corporate resources</li>
+  <li>Users in regions with internet restrictions</li>
+  <li>Anyone needing simultaneous VPN connections</li>
+</ul>
+
+<h2 id="installation">Installation</h2>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c"># Clone the repository</span>
+git clone https://github.com/maks/dual-vpn-router.git
+<span class="nb">cd </span>dual-vpn-router
+
+<span class="c"># Install deps</span>
+go mod tidy
+
+<span class="c"># Build</span>
+go build <span class="nt">-o</span> dual-vpn ./cmd
+
+<span class="c"># Install (optional)</span>
+<span class="nb">sudo cp </span>dual-vpn /usr/local/bin/
+<span class="nb">sudo chmod</span> +x /usr/local/bin/dual-vpn
+</code></pre></div></div>
+
+<h2 id="quick-start">Quick Start</h2>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c"># 1. Initialize configuration</span>
+<span class="nb">sudo </span>dual-vpn init
+
+<span class="c"># 2. Edit configuration to match your VPN setup</span>
+<span class="nb">sudo </span>nano /etc/dual-vpn/config.yaml
+
+<span class="c"># 3. Connect your VPNs (use your VPN client first!)</span>
+<span class="c">#    - Corporate VPN connection</span>
+<span class="c">#    - Global VPN connection</span>
+<span class="c">#    Make sure BOTH VPNs are connected before proceeding!</span>
+
+<span class="c"># 4. Setup routing</span>
+<span class="nb">sudo </span>dual-vpn setup
+
+<span class="c"># 5. Check status</span>
+dual-vpn status
+
+<span class="c"># 6. Cleanup when done (or disconnect VPNs)</span>
+<span class="nb">sudo </span>dual-vpn cleanup
+</code></pre></div></div>
+
+<h2 id="important-vpn-connection-order">Important: VPN Connection Order</h2>
+
+<h3 id="starting-up-correct-order">Starting Up (Correct Order)</h3>
+<ol>
+  <li><strong>Connect your VPNs first</strong> using your VPN client (WireGuard, OpenVPN, etc.)
+    <ul>
+      <li>Connect corporate VPN</li>
+      <li>Connect global VPN</li>
+    </ul>
+  </li>
+  <li><strong>Verify both VPNs are up</strong> (check with <code class="language-plaintext highlighter-rouge">sudo dual-vpn status</code>)</li>
+  <li><strong>Then run <code class="language-plaintext highlighter-rouge">sudo dual-vpn setup</code></strong></li>
+</ol>
+
+<h3 id="shutting-down-correct-order">Shutting Down (Correct Order)</h3>
+<ol>
+  <li><strong>Run <code class="language-plaintext highlighter-rouge">sudo dual-vpn cleanup</code> first</strong>
+    <ul>
+      <li>This restores DNS to original state</li>
+      <li>This removes all routing rules</li>
+    </ul>
+  </li>
+  <li><strong>Then disconnect your VPNs</strong> using your VPN client</li>
+</ol>
+
+<h3 id="why-this-order-matters">Why This Order Matters</h3>
+
+<p>The script creates temporary DNS and routing configurations. If you disconnect VPNs <strong>before</strong> running cleanup:</p>
+
+<ul>
+  <li>DNS queries may fail (pointing to VPN DNS servers that are no longer reachable)</li>
+  <li>Routing rules may remain active (pointing to disconnected VPN interfaces)</li>
+  <li>Network may be in inconsistent state</li>
+</ul>
+
+<p><strong>Always run <code class="language-plaintext highlighter-rouge">cleanup</code> BEFORE disconnecting VPNs!</strong></p>
+
+<h2 id="configuration">Configuration</h2>
+
+<p><strong>IMPORTANT</strong>: You must manually edit the configuration file with your actual corporate DNS servers, domains, and network ranges. The default configuration contains placeholder values.</p>
+
+<p>Run <code class="language-plaintext highlighter-rouge">sudo dual-vpn init</code> to create a default config at <code class="language-plaintext highlighter-rouge">/etc/dual-vpn/config.yaml</code>, then edit it:</p>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nb">sudo </span>nano /etc/dual-vpn/config.yaml
+</code></pre></div></div>
+
+<h3 id="required-changes">Required Changes</h3>
+
+<ol>
+  <li><strong><code class="language-plaintext highlighter-rouge">dns.domains</code></strong>: Replace with your corporate domain(s)
+    <ul>
+      <li><code class="language-plaintext highlighter-rouge">name</code>: Your corporate domain (e.g., <code class="language-plaintext highlighter-rouge">company.internal</code>)</li>
+      <li><code class="language-plaintext highlighter-rouge">servers</code>: Your corporate DNS server IP addresses</li>
+    </ul>
+  </li>
+  <li><strong><code class="language-plaintext highlighter-rouge">routing.corp_networks</code></strong>: Add your corporate network ranges
+    <ul>
+      <li>These networks will be routed through corporate VPN</li>
+      <li>Common ranges: <code class="language-plaintext highlighter-rouge">10.0.0.0/8</code>, <code class="language-plaintext highlighter-rouge">172.16.0.0/12</code>, <code class="language-plaintext highlighter-rouge">192.168.0.0/16</code></li>
+    </ul>
+  </li>
+  <li><strong><code class="language-plaintext highlighter-rouge">vpns.interface</code></strong>: Check your VPN interface names
+    <ul>
+      <li>Run <code class="language-plaintext highlighter-rouge">ip link show</code> after connecting VPNs to see interface names</li>
+      <li>Common names: <code class="language-plaintext highlighter-rouge">tun0</code>, <code class="language-plaintext highlighter-rouge">wg0</code>, <code class="language-plaintext highlighter-rouge">ppp0</code></li>
+    </ul>
+  </li>
+</ol>
+
+<h3 id="example-configuration">Example Configuration</h3>
+
+<div class="language-yaml highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1"># ===== YOU MUST CHANGE THESE =====</span>
+<span class="na">dns</span><span class="pi">:</span>
+    <span class="na">listen_addr</span><span class="pi">:</span> <span class="s">127.0.0.1:53</span>  <span class="c1"># OK: Leave as is</span>
+    <span class="na">fallback</span><span class="pi">:</span>
+        <span class="pi">-</span> <span class="s">8.8.8.8</span>               <span class="c1"># OK: Leave as is (public DNS)</span>
+        <span class="pi">-</span> <span class="s">8.8.4.4</span>               <span class="c1"># OK: Leave as is (public DNS)</span>
+    <span class="na">domains</span><span class="pi">:</span>
+        <span class="pi">-</span> <span class="na">name</span><span class="pi">:</span> <span class="s">corporate.example.com</span>  <span class="c1"># CHANGE: Your corporate domain</span>
+          <span class="na">servers</span><span class="pi">:</span>
+            <span class="pi">-</span> <span class="s">192.168.1.1</span>              <span class="c1"># CHANGE: Your corporate DNS server IP</span>
+            <span class="pi">-</span> <span class="s">192.168.1.2</span>              <span class="c1"># CHANGE: Your corporate DNS server IP (if you have)</span>
+
+<span class="na">routing</span><span class="pi">:</span>
+    <span class="na">corp_table_id</span><span class="pi">:</span> <span class="m">200</span>          <span class="c1"># OK: Leave as is</span>
+    <span class="na">corp_networks</span><span class="pi">:</span>
+        <span class="pi">-</span> <span class="s">10.0.0.0/8</span>            <span class="c1"># OK: Keep if your company uses these ranges</span>
+        <span class="pi">-</span> <span class="s">172.16.0.0/12</span>         <span class="c1"># OK: Keep if your company uses these ranges</span>
+        <span class="pi">-</span> <span class="s">192.168.0.0/16</span>        <span class="c1"># OK: Keep if your company uses these ranges</span>
+
+<span class="na">vpns</span><span class="pi">:</span>
+    <span class="pi">-</span> <span class="na">name</span><span class="pi">:</span> <span class="s">corporate</span>           <span class="c1"># OK: Leave as is</span>
+      <span class="na">interface</span><span class="pi">:</span> <span class="s">tun0</span>           <span class="c1"># CHECK: Run 'ip link show' to verify your interface name</span>
+      <span class="na">auto_detect</span><span class="pi">:</span> <span class="no">true</span>         <span class="c1"># OK: Leave as is</span>
+      <span class="na">type</span><span class="pi">:</span> <span class="s">corporate</span>           <span class="c1"># OK: Leave as is</span>
+    <span class="pi">-</span> <span class="na">name</span><span class="pi">:</span> <span class="s">global</span>              <span class="c1"># OK: Leave as is</span>
+      <span class="na">interface</span><span class="pi">:</span> <span class="s">wg0</span>            <span class="c1"># CHECK: Run 'ip link show' to verify your interface name</span>
+      <span class="na">auto_detect</span><span class="pi">:</span> <span class="no">true</span>         <span class="c1"># OK: Leave as is</span>
+      <span class="na">type</span><span class="pi">:</span> <span class="s">global</span>              <span class="c1"># OK: Leave as is</span>
+</code></pre></div></div>
+
+<h3 id="configuration-parameters">Configuration Parameters</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>Parameter</th>
+      <th>Description</th>
+      <th>Example</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">dns.listen_addr</code></td>
+      <td>Where dnsmasq listens for DNS queries</td>
+      <td><code class="language-plaintext highlighter-rouge">127.0.0.1:53</code></td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">dns.fallback</code></td>
+      <td>Default DNS servers for non-corporate domains</td>
+      <td><code class="language-plaintext highlighter-rouge">8.8.8.8</code></td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">dns.domains[].name</code></td>
+      <td>Corporate domain name</td>
+      <td><code class="language-plaintext highlighter-rouge">company.internal</code></td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">dns.domains[].servers</code></td>
+      <td>Corporate DNS server IPs</td>
+      <td><code class="language-plaintext highlighter-rouge">192.168.1.1</code></td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">routing.corp_table_id</code></td>
+      <td>Routing table ID for corporate traffic</td>
+      <td><code class="language-plaintext highlighter-rouge">200</code></td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">routing.corp_networks</code></td>
+      <td>Networks routed through corporate VPN</td>
+      <td><code class="language-plaintext highlighter-rouge">10.0.0.0/8</code></td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">vpns[].interface</code></td>
+      <td>VPN interface name</td>
+      <td><code class="language-plaintext highlighter-rouge">tun0</code></td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">vpns[].type</code></td>
+      <td>VPN type: <code class="language-plaintext highlighter-rouge">corporate</code> or <code class="language-plaintext highlighter-rouge">global</code></td>
+      <td><code class="language-plaintext highlighter-rouge">corporate</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="how-it-works">How It Works</h2>
+
+<ol>
+  <li><strong>DNS Layer</strong>: Uses dnsmasq to route DNS queries to different servers based on domain</li>
+  <li><strong>Routing Layer</strong>: Uses PBR to route traffic through different VPN interfaces</li>
+  <li><strong>Auto Setup</strong>: NetworkManager dispatcher for automatic configuration</li>
+</ol>
+
+<h2 id="commands">Commands</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>Command</th>
+      <th>Description</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">dual-vpn init</code></td>
+      <td>Create default configuration file</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">dual-vpn setup</code></td>
+      <td>Set up dual VPN routing (run AFTER VPNs are connected)</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">dual-vpn cleanup</code></td>
+      <td>Remove all routing rules and restore DNS (run BEFORE disconnecting VPNs)</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">dual-vpn status</code></td>
+      <td>Show current status</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="do-i-need-to-manually-manage-vpn-connections">Do I Need to Manually Manage VPN Connections?</h2>
+
+<p><strong>No, the script does NOT manage VPN connections automatically.</strong> You must:</p>
+
+<ul>
+  <li><strong>Connect VPNs manually</strong> using your VPN client (NetworkManager, WireGuard, OpenVPN, etc.)</li>
+  <li><strong>Run <code class="language-plaintext highlighter-rouge">dual-vpn setup</code></strong> AFTER both VPNs are connected</li>
+  <li><strong>Run <code class="language-plaintext highlighter-rouge">dual-vpn cleanup</code></strong> BEFORE disconnecting VPNs</li>
+</ul>
+
+<p>The script only manages DNS and routing configuration, not the VPN connections themselves.</p>
+
+<h2 id="requirements">Requirements</h2>
+
+<ul>
+  <li>Linux (Ubuntu/Debian/Arch)</li>
+  <li>NetworkManager</li>
+  <li>dnsmasq</li>
+  <li>systemd-resolved (optional)</li>
+  <li>iptables/iproute2</li>
+</ul>
+
+<h2 id="important-notes">Important Notes</h2>
+
+<h3 id="configuration-is-manual">Configuration is Manual</h3>
+
+<p>The <code class="language-plaintext highlighter-rouge">dual-vpn init</code> command creates a <strong>placeholder configuration</strong>. You <strong>must</strong> edit it manually:</p>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nb">sudo </span>dual-vpn init
+<span class="nb">sudo </span>nano /etc/dual-vpn/config.yaml
+</code></pre></div></div>
+
+<p>Without proper configuration, the routing will not work correctly. Make sure to:</p>
+
+<ol>
+  <li>Set your actual corporate domain(s) in <code class="language-plaintext highlighter-rouge">dns.domains</code></li>
+  <li>Set your corporate DNS server IPs in <code class="language-plaintext highlighter-rouge">dns.domains[].servers</code></li>
+  <li>Add your corporate network ranges in <code class="language-plaintext highlighter-rouge">routing.corp_networks</code></li>
+  <li>Verify VPN interface names match your setup in <code class="language-plaintext highlighter-rouge">vpns[].interface</code></li>
+</ol>
+
+<h2 id="license">License</h2>
+
+<p>MIT License</p>
+
+<h2 id="contributing">Contributing</h2>
+
+<p>Contributions are welcome! Please feel free to submit a Pull Request.</p>
+
+<h2 id="keywords">Keywords</h2>
+
+<p>linux, vpn, pbr, policy based routing, dual vpn, split routing, подключить два впн одновременно, два впн на одном компьютере, ip routing, dns routing, настройка двух vpn, split dns, политика маршрутизации, два vpn на linux, корпоративный vpn и личный vpn одновременно</p>
+
+
+
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/anchor-js/4.1.0/anchor.min.js" integrity="sha256-lZaRhKri35AyJSypXXs4o6OPFTbTmUoltBbDCbdzegg=" crossorigin="anonymous"></script>
+    <script>anchors.add();</script>
+  </body>
+</html>
