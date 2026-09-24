@@ -4,6 +4,8 @@
 
 Вы выбираете, какой трафик идёт в какой туннель, а какой — напрямую. Без ручной правки `AllowedIPs`, таблиц `ip rule` и systemd-resolved.
 
+[English version](README_ENG.md)
+
 ![Главное окно](docs/screenshots/01-overview.png)
 
 ## Какую проблему решает

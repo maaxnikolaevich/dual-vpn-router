@@ -1,0 +1,24 @@
+title: dual-vpn-router
+tagline: Split tunneling для Linux — раздельное туннелирование VPN
+description: >-
+  Выбирайте, какой трафик идёт через какой VPN-туннель, а какой напрямую.
+  Раздельное туннелирование для WireGuard, OpenVPN и AmneziaWG на Linux, GUI и CLI.
+lang: ru_RU
+
+url: https://maaxnikolaevich.github.io
+baseurl: /dual-vpn-router
+
+theme: jekyll-theme-primer
+
+# Search engine verification tags live in _includes/head-custom.html.
+
+exclude:
+  - cmd/
+  - internal/
+  - pkg/
+  - packaging/
+  - go.mod
+  - go.sum
+  - dual-vpn
+  - dual-vpn-gui
+  - img.png
