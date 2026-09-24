@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Dual VPN Router
+GenericName=VPN Routing Control
+Comment=Choose which destinations and domains travel through which VPN tunnel
+Exec=/usr/local/bin/dual-vpn-gui
+Icon=network-vpn-symbolic
+Terminal=false
+Categories=Network;System;Settings;
+Keywords=VPN;routing;DNS;WireGuard;OpenVPN;
+StartupNotify=true
+StartupWMClass=dual-vpn-gui

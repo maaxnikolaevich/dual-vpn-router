@@ -1,5 +1,7 @@
-# Binaries
-dual-vpn
+# Built binaries. Anchored to the repo root and they must stay that way:
+# a bare "dual-vpn" also matches the cmd/dual-vpn/ source directory.
+/dual-vpn
+/dual-vpn-gui
 *.exe
 *.dll
 *.so

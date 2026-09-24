@@ -1,210 +1,226 @@
 # dual-vpn-router
 
-Manage two VPN connections simultaneously on Linux through (Policy Based Routing).
+**VPN split tunneling for Linux.**
+
+Choose which traffic goes through which tunnel and which goes straight out. No hand-editing `AllowedIPs`, `ip rule` tables or systemd-resolved.
+
+![Main window](docs/screenshots/01-overview.png)
+
+## The problem it solves
+
+When two VPNs are up on one machine — a work one and a personal one — both try to claim the default route. What follows is familiar: all your internet leaves through the corporate tunnel, or internal domains stop resolving, or connectivity drops entirely until you disconnect one of them.
+
+By hand this is fixed with `AllowedIPs` in WireGuard, `route-nopull` in OpenVPN, separate routing tables and per-interface domains in systemd-resolved. It works — and then falls apart after every tunnel reconnect or resume from suspend.
+
+This tool expresses the same thing declaratively: rules are written once, and a daemon holds the state and restores it whenever a tunnel comes back up.
+
+Use it when you need to:
+
+- keep a work VPN and a personal VPN connected at the same time;
+- reach corporate subnets and internal domains without routing the whole internet there;
+- spread traffic across several tunnels by destination.
 
 ## Features
 
-- ✅ **Split DNS** - Route DNS queries through different servers based on domain
-- ✅ **Policy Based Routing** - Route traffic through different VPN connections
-- ✅ **Auto-detection** - Automatically detect VPN interfaces
-- ✅ **Easy CLI** - Simple command-line interface
-- ✅ **YAML Config** - Human-readable configuration
+- **Policy based routing** — CIDR lists are routed into a chosen tunnel, everything else goes direct
+- **Split DNS** — a domain resolves through its own DNS servers, and the queries to those servers travel through the right tunnel
+- **Fail-closed** — a rule's traffic can be dropped while its tunnel is down, so it never leaks onto the open network
+- **Tunnel control** — brings NetworkManager, WireGuard and AmneziaWG profiles up and down
+- **Auto-detection** — existing VPN profiles are discovered for you, and interfaces are picked up again after a reconnect
+- **GUI and CLI** — a desktop app on top of the same daemon the command line talks to
+- **YAML config** — human-readable, reviewable and portable
 
-## Problem Solved
+## A tour of the interface
 
-This tool solves the problem of using a corporate VPN and a personal VPN for bypassing internet restrictions at the same time. Perfect for:
+### 1. Main window
 
-- Remote workers who need access to corporate resources
-- Users in regions with internet restrictions
-- Anyone needing simultaneous VPN connections
+![Main window](docs/screenshots/01-overview.png)
+
+On the left are your tunnels and their state: profile type, interface, gateway. **Direct** is listed alongside them as the no-tunnel route.
+
+On the right are two lists of rules. **Routes** send subnets into a tunnel, **DNS** overrides resolution for individual domains. Any rule can be toggled, or dragged onto a different tunnel to re-target it.
+
+The **Routing** switch in the header is the master toggle: it removes everything the tool installed into the system, without touching the VPN connections themselves.
+
+### 2. Add a tunnel
+
+![Add VPN](docs/screenshots/02-add-tunnel.png)
+
+Profiles are discovered automatically: NetworkManager connections and configs under `/etc/wireguard` and `/etc/amnezia`. Ones you have already added are greyed out, so a profile cannot be added twice. Pick a profile, give the tunnel a name, and rules will refer to it by that name.
+
+### 3. New route
+
+![New route](docs/screenshots/03-add-route.png)
+
+A routing rule is a list of subnets plus the tunnel they go into. Destinations are comma-separated CIDRs, and `Route via` selects a tunnel or `direct`.
+
+The **Block this traffic while the tunnel is down** checkbox enables fail-closed behaviour: if the tunnel drops, packets to those subnets are discarded instead of falling back to your normal connection. Worth enabling for corporate networks.
+
+### 4. New domain
+
+![New domain](docs/screenshots/04-add-domain.png)
+
+This is where split DNS is configured. `Domain` is the zone that needs special resolution, `DNS servers` are the addresses that serve it, and `Reach these servers via` is the tunnel the queries themselves travel through.
+
+That last field matters: internal DNS servers are usually only reachable from inside the corporate network, so queries must go through the corporate tunnel even when the domain resolves to a public address.
 
 ## Installation
 
 ```bash
-# Clone the repository
-git clone https://github.com/maks/dual-vpn-router.git
+git clone https://github.com/maaxnikolaevich/dual-vpn-router.git
 cd dual-vpn-router
-
-# Install deps
-go mod tidy
-
-# Build
-go build -o dual-vpn ./cmd
-
-# Install (optional)
-sudo cp dual-vpn /usr/local/bin/
-sudo chmod +x /usr/local/bin/dual-vpn
+sudo ./packaging/install.sh
 ```
 
-## Quick Start
+The script builds both binaries, installs them into `/usr/local/bin`, creates the `dual-vpn` group, adds the current user to it, enables the systemd unit and installs the desktop entry.
+
+The group is what lets the GUI drive the daemon without asking for a password on every toggle. **Log out and back in after the first install**, otherwise the group membership will not apply and the GUI cannot reach the daemon.
+
+Build dependencies: `golang-go`, `libgtk-4-dev`, `libadwaita-1-dev`, `libgirepository1.0-dev`, `dnsmasq`. The script checks for them before building.
+
+### Manually
 
 ```bash
-# 1. Initialize configuration
+go build -o dual-vpn ./cmd/dual-vpn
+go build -o dual-vpn-gui ./cmd/dual-vpn-gui
+```
+
+## Quick start
+
+```bash
+# 1. Create a configuration
 sudo dual-vpn init
 
-# 2. Edit configuration to match your VPN setup
+# 2. Edit it for your tunnels and networks
 sudo nano /etc/dual-vpn/config.yaml
 
-# 3. Connect your VPNs (use your VPN client first!)
-#    - Corporate VPN connection
-#    - Global VPN connection
-#    Make sure BOTH VPNs are connected before proceeding!
+# 3. Apply
+sudo dual-vpn start
 
-# 4. Setup routing
-sudo dual-vpn setup
-
-# 5. Check status
+# 4. Check
 dual-vpn status
-
-# 6. Cleanup when done (or disconnect VPNs)
-sudo dual-vpn cleanup
 ```
 
-## Important: VPN Connection Order
+Or launch `dual-vpn-gui` and add tunnels and rules through the interface — the configuration is written for you.
 
-### Starting Up (Correct Order)
-1. **Connect your VPNs first** using your VPN client (WireGuard, OpenVPN, etc.)
-   - Connect corporate VPN
-   - Connect global VPN
-2. **Verify both VPNs are up** (check with `sudo dual-vpn status`)
-3. **Then run `sudo dual-vpn setup`**
+The daemon brings up the tunnels it is told to manage, so there is no need to connect your VPNs beforehand. It periodically reconciles the system against the configuration and restores routes after a tunnel reconnects.
 
-### Shutting Down (Correct Order)
-1. **Run `sudo dual-vpn cleanup` first**
-   - This restores DNS to original state
-   - This removes all routing rules
-2. **Then disconnect your VPNs** using your VPN client
-
-### Why This Order Matters
-
-The script creates temporary DNS and routing configurations. If you disconnect VPNs **before** running cleanup:
-
-- DNS queries may fail (pointing to VPN DNS servers that are no longer reachable)
-- Routing rules may remain active (pointing to disconnected VPN interfaces)
-- Network may be in inconsistent state
-
-**Always run `cleanup` BEFORE disconnecting VPNs!**
-
-## Configuration
-
-**IMPORTANT**: You must manually edit the configuration file with your actual corporate DNS servers, domains, and network ranges. The default configuration contains placeholder values.
-
-Run `sudo dual-vpn init` to create a default config at `/etc/dual-vpn/config.yaml`, then edit it:
-
-```bash
-sudo nano /etc/dual-vpn/config.yaml
-```
-
-### Required Changes
-
-1. **`dns.domains`**: Replace with your corporate domain(s)
-   - `name`: Your corporate domain (e.g., `company.internal`)
-   - `servers`: Your corporate DNS server IP addresses
-
-2. **`routing.corp_networks`**: Add your corporate network ranges
-   - These networks will be routed through corporate VPN
-   - Common ranges: `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`
-
-3. **`vpns.interface`**: Check your VPN interface names
-   - Run `ip link show` after connecting VPNs to see interface names
-   - Common names: `tun0`, `wg0`, `ppp0`
-
-### Example Configuration
-
-```yaml
-# ===== YOU MUST CHANGE THESE =====
-dns:
-    listen_addr: 127.0.0.1:53  # OK: Leave as is
-    fallback:
-        - 8.8.8.8               # OK: Leave as is (public DNS)
-        - 8.8.4.4               # OK: Leave as is (public DNS)
-    domains:
-        - name: corporate.example.com  # CHANGE: Your corporate domain
-          servers:
-            - 192.168.1.1              # CHANGE: Your corporate DNS server IP
-            - 192.168.1.2              # CHANGE: Your corporate DNS server IP (if you have)
-
-routing:
-    corp_table_id: 200          # OK: Leave as is
-    corp_networks:
-        - 10.0.0.0/8            # OK: Keep if your company uses these ranges
-        - 172.16.0.0/12         # OK: Keep if your company uses these ranges
-        - 192.168.0.0/16        # OK: Keep if your company uses these ranges
-
-vpns:
-    - name: corporate           # OK: Leave as is
-      interface: tun0           # CHECK: Run 'ip link show' to verify your interface name
-      auto_detect: true         # OK: Leave as is
-      type: corporate           # OK: Leave as is
-    - name: global              # OK: Leave as is
-      interface: wg0            # CHECK: Run 'ip link show' to verify your interface name
-      auto_detect: true         # OK: Leave as is
-      type: global              # OK: Leave as is
-```
-
-### Configuration Parameters
-
-| Parameter | Description | Example |
-|-----------|-------------|---------|
-| `dns.listen_addr` | Where dnsmasq listens for DNS queries | `127.0.0.1:53` |
-| `dns.fallback` | Default DNS servers for non-corporate domains | `8.8.8.8` |
-| `dns.domains[].name` | Corporate domain name | `company.internal` |
-| `dns.domains[].servers` | Corporate DNS server IPs | `192.168.1.1` |
-| `routing.corp_table_id` | Routing table ID for corporate traffic | `200` |
-| `routing.corp_networks` | Networks routed through corporate VPN | `10.0.0.0/8` |
-| `vpns[].interface` | VPN interface name | `tun0` |
-| `vpns[].type` | VPN type: `corporate` or `global` | `corporate` |
-
-## How It Works
-
-1. **DNS Layer**: Uses dnsmasq to route DNS queries to different servers based on domain
-2. **Routing Layer**: Uses PBR to route traffic through different VPN interfaces
-3. **Auto Setup**: NetworkManager dispatcher for automatic configuration
+On exit the daemon deliberately leaves routing in place: otherwise a restart or crash would silently drop your traffic out of its tunnel and onto the open network. To remove everything it installed, run `dual-vpn stop`.
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `dual-vpn init` | Create default configuration file |
-| `dual-vpn setup` | Set up dual VPN routing (run AFTER VPNs are connected) |
-| `dual-vpn cleanup` | Remove all routing rules and restore DNS (run BEFORE disconnecting VPNs) |
-| `dual-vpn status` | Show current status |
+| `dual-vpn init` | Write a default configuration file |
+| `dual-vpn status` | Show tunnels, routing rules and DNS overrides |
+| `dual-vpn start` | Apply routing and DNS |
+| `dual-vpn stop` | Remove everything this tool installed |
+| `dual-vpn apply` | Re-converge the system on the configuration |
+| `dual-vpn daemon` | Run the control daemon (requires root) |
+| `dual-vpn tunnel up\|down <name>` | Bring a tunnel up or down |
+| `dual-vpn rule enable\|disable <id>` | Enable or disable a routing rule |
+| `dual-vpn rule target <id> <tunnel\|direct>` | Route a rule through a different tunnel |
+| `dual-vpn dns enable\|disable <domain>` | Enable or disable a domain override |
 
-## Do I Need to Manually Manage VPN Connections?
+The old `setup` and `cleanup` still work as aliases for `start` and `stop`.
 
-**No, the script does NOT manage VPN connections automatically.** You must:
+Global flags: `--config` (defaults to `/etc/dual-vpn/config.yaml`) and `--socket` (the daemon control socket).
 
-- **Connect VPNs manually** using your VPN client (NetworkManager, WireGuard, OpenVPN, etc.)
-- **Run `dual-vpn setup`** AFTER both VPNs are connected
-- **Run `dual-vpn cleanup`** BEFORE disconnecting VPNs
+## Configuration
 
-The script only manages DNS and routing configuration, not the VPN connections themselves.
+`sudo dual-vpn init` writes a placeholder config to `/etc/dual-vpn/config.yaml`. You must replace the placeholders with your own values.
+
+```yaml
+version: 2
+
+dns:
+    listen_addr: 127.0.0.1
+    fallback:
+        - 8.8.8.8
+        - 8.8.4.4
+
+tunnels:
+    - name: corp                  # the name rules refer to
+      kind: nm                    # nm | wg-quick | awg-quick | manual
+      profile: corporate-vpn      # NetworkManager profile or .conf name
+      table_id: 200               # its own routing table, unique per tunnel
+      auto_detect: true
+    - name: global
+      kind: wg-quick              # /etc/wireguard/wg0.conf
+      profile: wg0
+      table_id: 201
+      auto_detect: true
+
+rules:
+    - id: corp-networks
+      target: corp                # a tunnel name, or direct
+      cidrs:
+        - 10.0.0.0/8
+        - 172.16.0.0/12
+      enabled: true
+      fail_closed: true           # drop this traffic while the tunnel is down
+      comment: Internal networks
+
+dns_rules:
+    - domain: corporate.example.com
+      servers:
+        - 192.168.1.1
+      via: corp                   # tunnel used to reach those DNS servers
+      enabled: true
+```
+
+### What you must change
+
+1. **`tunnels[].profile`** — your real profile names. For `nm` it is the connection name from `nmcli connection show`; for `wg-quick` the filename in `/etc/wireguard` without the extension; for `awg-quick` the same under `/etc/amnezia/amneziawg`.
+2. **`rules[].cidrs`** — the subnets that should travel through the tunnel.
+3. **`dns_rules`** — your internal domains and the DNS servers that serve them.
+
+### Tunnel kinds
+
+| `kind` | Driven by |
+|--------|-----------|
+| `nm` | A NetworkManager profile via `nmcli` |
+| `wg-quick` | `/etc/wireguard/<profile>.conf` via `wg-quick` |
+| `awg-quick` | `/etc/amnezia/amneziawg/<profile>.conf` via `awg-quick` (AmneziaWG) |
+| `manual` | Only observed; the tool never brings it up or down |
+
+### Parameters
+
+| Parameter | Description | Example |
+|-----------|-------------|---------|
+| `dns.listen_addr` | Where dnsmasq listens for queries | `127.0.0.1` |
+| `dns.fallback` | DNS servers for every other domain | `8.8.8.8` |
+| `tunnels[].name` | Tunnel name that rules refer to | `corp` |
+| `tunnels[].kind` | How the tunnel is driven | `wg-quick` |
+| `tunnels[].profile` | Profile or config name | `wg0` |
+| `tunnels[].table_id` | Routing table ID, unique per tunnel | `200` |
+| `tunnels[].auto_detect` | Detect the interface automatically | `true` |
+| `rules[].id` | Rule identifier | `corp-networks` |
+| `rules[].target` | Destination tunnel, or `direct` | `corp` |
+| `rules[].cidrs` | Subnets the rule covers | `10.0.0.0/8` |
+| `rules[].fail_closed` | Block traffic while the tunnel is down | `true` |
+| `dns_rules[].domain` | Domain with custom resolution | `corp.example.com` |
+| `dns_rules[].servers` | DNS servers for that domain | `192.168.1.1` |
+| `dns_rules[].via` | Tunnel used to reach those servers | `corp` |
+
+Version 1 configs (the old `vpns:` and `routing.corp_networks` schema) are read and migrated automatically.
+
+## How it works
+
+1. **Routing** — each tunnel gets its own routing table, and `ip rule` steers the rules' subnets into it
+2. **DNS** — dnsmasq resolves the listed domains through their servers, and an fwmark pushes those queries into the right tunnel
+3. **Daemon** — holds the state, periodically reconciles the system against the config and repairs routes after a tunnel reconnects
+4. **Control socket** — a unix socket owned by the `dual-vpn` group, used by both the CLI and the GUI
 
 ## Requirements
 
 - Linux (Ubuntu/Debian/Arch)
-- NetworkManager
+- systemd
 - dnsmasq
-- systemd-resolved (optional)
-- iptables/iproute2
-
-## Important Notes
-
-### Configuration is Manual
-
-The `dual-vpn init` command creates a **placeholder configuration**. You **must** edit it manually:
-
-```bash
-sudo dual-vpn init
-sudo nano /etc/dual-vpn/config.yaml
-```
-
-Without proper configuration, the routing will not work correctly. Make sure to:
-
-1. Set your actual corporate domain(s) in `dns.domains`
-2. Set your corporate DNS server IPs in `dns.domains[].servers`
-3. Add your corporate network ranges in `routing.corp_networks`
-4. Verify VPN interface names match your setup in `vpns[].interface`
+- iproute2, iptables
+- NetworkManager — for `nm` tunnels
+- wireguard-tools — for `wg-quick`
+- GTK 4 and libadwaita — for the GUI
 
 ## License
 
@@ -216,4 +232,4 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## Keywords
 
-linux, vpn, pbr, policy based routing, dual vpn, split routing, подключить два впн одновременно, два впн на одном компьютере, ip routing, dns routing, настройка двух vpn, split dns, политика маршрутизации, два vpn на linux, корпоративный vpn и личный vpn одновременно
+split tunneling, vpn split tunnel, linux, vpn, pbr, policy based routing, dual vpn, split routing, two vpn at the same time, ip routing, dns routing, split dns, wireguard split tunnel, openvpn split tunnel, amneziawg, раздельное туннелирование vpn, подключить два впн одновременно, два vpn на linux, корпоративный vpn и личный vpn одновременно

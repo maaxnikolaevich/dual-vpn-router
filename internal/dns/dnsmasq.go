@@ -1,219 +1,209 @@
+// Package dns drives a dnsmasq instance that answers split-horizon queries.
+//
+// The split lives entirely inside dnsmasq: systemd-resolved is pointed at
+// dnsmasq for every domain, and dnsmasq decides per-domain which upstream to
+// use. Toggling one domain therefore rewrites a single file and sends SIGHUP,
+// with no resolver restart and no edits to /etc/resolv.conf.
 package dns
 
 import (
+	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
-// Dnsmasq manages dnsmasq configuration
-type Dnsmasq struct {
-	ConfigDir          string
-	ConfigFile         string
-	PIDFile            string
-	LogFile            string
-	ResolvedConfigFile string
-	BackupResolvConf   string
-}
+const (
+	baseConfigPath   = "/etc/dnsmasq.d/dual-vpn.conf"
+	serversFilePath  = "/var/lib/dual-vpn/servers.conf"
+	resolvedDropPath = "/etc/systemd/resolved.conf.d/dual-vpn.conf"
+)
 
-// NewDnsmasq creates a new Dnsmasq manager
-func NewDnsmasq() *Dnsmasq {
-	return &Dnsmasq{
-		ConfigDir:          "/etc/dnsmasq.d",
-		ConfigFile:         "/etc/dnsmasq.d/dual-vpn.conf",
-		PIDFile:            "/run/dnsmasq/dnsmasq.pid",
-		LogFile:            "/var/log/dnsmasq.log",
-		ResolvedConfigFile: "/etc/systemd/resolved.conf.d/dual-vpn.conf",
-		BackupResolvConf:   "/var/lib/dual-vpn/resolv.conf.backup",
-	}
-}
-
-// GenerateConfig generates dnsmasq configuration
-func (d *Dnsmasq) GenerateConfig(domains []DomainConfig, fallback []string) ([]byte, error) {
-	var builder strings.Builder
-
-	builder.WriteString("# Dual-VPN-Router DNS Configuration\n")
-	builder.WriteString("# Generated automatically - do not edit manually\n\n")
-
-	builder.WriteString(fmt.Sprintf("listen-address=127.0.0.1\n"))
-	builder.WriteString("no-resolv\n")
-
-	// Add domain-specific DNS servers
-	for _, domain := range domains {
-		for _, server := range domain.Servers {
-			builder.WriteString(fmt.Sprintf("server=/%s/%s\n", domain.Name, server))
-		}
-	}
-
-	// Add fallback DNS
-	for _, server := range fallback {
-		builder.WriteString(fmt.Sprintf("server=%s\n", server))
-	}
-
-	builder.WriteString("\n")
-	builder.WriteString("cache-size=1000\n")
-	builder.WriteString("no-negcache\n")
-	builder.WriteString("log-queries\n")
-	builder.WriteString(fmt.Sprintf("log-facility=%s\n", d.LogFile))
-
-	return []byte(builder.String()), nil
-}
-
-// WriteConfig writes dnsmasq configuration to file
-func (d *Dnsmasq) WriteConfig(config []byte) error {
-	// Ensure config directory exists
-	if err := os.MkdirAll(d.ConfigDir, 0755); err != nil {
-		return fmt.Errorf("failed to create config directory: %w", err)
-	}
-
-	return os.WriteFile(d.ConfigFile, config, 0644)
-}
-
-// Restart restarts dnsmasq service
-func (d *Dnsmasq) Restart() error {
-	// Backup original resolv.conf before making any changes
-	if err := d.backupResolvConf(); err != nil {
-		fmt.Printf("Warning: failed to backup resolv.conf: %v\n", err)
-	}
-
-	// Enable dnsmasq
-	if err := exec.Command("systemctl", "enable", "dnsmasq").Run(); err != nil {
-		return fmt.Errorf("failed to enable dnsmasq: %w", err)
-	}
-
-	// Restart dnsmasq
-	if err := exec.Command("systemctl", "restart", "dnsmasq").Run(); err != nil {
-		return fmt.Errorf("failed to restart dnsmasq: %w", err)
-	}
-
-	return nil
-}
-
-// Stop stops dnsmasq service
-func (d *Dnsmasq) Stop() error {
-	return exec.Command("systemctl", "stop", "dnsmasq").Run()
-}
-
-// IsRunning checks if dnsmasq is running
-func (d *Dnsmasq) IsRunning() bool {
-	output, err := exec.Command("systemctl", "is-active", "dnsmasq").CombinedOutput()
-	if err != nil {
-		return false
-	}
-	return strings.TrimSpace(string(output)) == "active"
-}
-
-// RemoveConfig removes the dnsmasq configuration file
-func (d *Dnsmasq) RemoveConfig() error {
-	if _, err := os.Stat(d.ConfigFile); err == nil {
-		return os.Remove(d.ConfigFile)
-	}
-	return nil
-}
-
-// CleanupSystemdResolved removes systemd-resolved configuration and restores default behavior
-func (d *Dnsmasq) CleanupSystemdResolved() error {
-	// Remove the custom config file
-	if _, err := os.Stat(d.ResolvedConfigFile); err == nil {
-		if err := os.Remove(d.ResolvedConfigFile); err != nil {
-			return fmt.Errorf("failed to remove resolved config: %w", err)
-		}
-	}
-
-	// Restart systemd-resolved to reload configuration
-	if err := exec.Command("systemctl", "restart", "systemd-resolved").Run(); err != nil {
-		return fmt.Errorf("failed to restart systemd-resolved: %w", err)
-	}
-
-	// Restore original resolv.conf from backup
-	if err := d.restoreResolvConf(); err != nil {
-		fmt.Printf("Warning: failed to restore resolv.conf: %v\n", err)
-	}
-
-	return nil
-}
-
-// FullCleanup stops dnsmasq and cleans up all DNS configuration
-func (d *Dnsmasq) FullCleanup() error {
-	// Stop dnsmasq
-	if err := d.Stop(); err != nil {
-		fmt.Printf("Warning: failed to stop dnsmasq: %v\n", err)
-	}
-
-	// Remove config file
-	if err := d.RemoveConfig(); err != nil {
-		fmt.Printf("Warning: failed to remove dnsmasq config: %v\n", err)
-	}
-
-	// Cleanup systemd-resolved and restore resolv.conf
-	if err := d.CleanupSystemdResolved(); err != nil {
-		fmt.Printf("Warning: failed to cleanup systemd-resolved: %v\n", err)
-	}
-
-	// Clean up backup file
-	if _, err := os.Stat(d.BackupResolvConf); err == nil {
-		if err := os.Remove(d.BackupResolvConf); err != nil {
-			fmt.Printf("Warning: failed to remove backup resolv.conf: %v\n", err)
-		}
-	}
-
-	return nil
-}
-
-// backupResolvConf backs up the original /etc/resolv.conf
-func (d *Dnsmasq) backupResolvConf() error {
-	// Ensure backup directory exists
-	if err := os.MkdirAll("/var/lib/dual-vpn", 0755); err != nil {
-		return err
-	}
-
-	// Check if backup already exists
-	if _, err := os.Stat(d.BackupResolvConf); err == nil {
-		return nil // Backup already exists
-	}
-
-	// Read current resolv.conf content
-	content, err := os.ReadFile("/etc/resolv.conf")
-	if err != nil {
-		return fmt.Errorf("failed to read resolv.conf: %w", err)
-	}
-
-	// Save to backup file
-	if err := os.WriteFile(d.BackupResolvConf, content, 0644); err != nil {
-		return fmt.Errorf("failed to write backup: %w", err)
-	}
-
-	return nil
-}
-
-// restoreResolvConf restores the original /etc/resolv.conf from backup
-func (d *Dnsmasq) restoreResolvConf() error {
-	// Check if backup exists
-	if _, err := os.Stat(d.BackupResolvConf); err != nil {
-		// No backup, just restore symlink to systemd-resolved
-		if err := exec.Command("ln", "-sf", "/run/systemd/resolve/resolv.conf", "/etc/resolv.conf").Run(); err != nil {
-			return fmt.Errorf("failed to restore symlink: %w", err)
-		}
-		return nil
-	}
-
-	// Read backup content
-	content, err := os.ReadFile(d.BackupResolvConf)
-	if err != nil {
-		return fmt.Errorf("failed to read backup: %w", err)
-	}
-
-	// Write to resolv.conf
-	if err := os.WriteFile("/etc/resolv.conf", content, 0644); err != nil {
-		return fmt.Errorf("failed to restore resolv.conf: %w", err)
-	}
-
-	return nil
-}
-
-// DomainConfig represents a domain with its DNS servers
-type DomainConfig struct {
-	Name    string
+// Entry maps a domain onto the upstream resolvers that are authoritative for it.
+type Entry struct {
+	Domain  string
 	Servers []string
+}
+
+type Manager struct {
+	BaseConfig   string
+	ServersFile  string
+	ResolvedDrop string
+}
+
+func New() *Manager {
+	return &Manager{
+		BaseConfig:   baseConfigPath,
+		ServersFile:  serversFilePath,
+		ResolvedDrop: resolvedDropPath,
+	}
+}
+
+func run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			return out, err
+		}
+		return out, fmt.Errorf("%s: %s", err, msg)
+	}
+	return out, nil
+}
+
+// renderBase builds the static dnsmasq config. It changes only when the listen
+// address changes, which is what lets the common case avoid a restart.
+func renderBase(listenAddr, serversFile string) []byte {
+	var b strings.Builder
+	b.WriteString("# Managed by dual-vpn. Do not edit.\n")
+	b.WriteString("listen-address=" + listenAddr + "\n")
+	// Without bind-interfaces dnsmasq binds the wildcard address and collides
+	// with systemd-resolved on 127.0.0.53:53.
+	b.WriteString("bind-interfaces\n")
+	// Never read /etc/resolv.conf: it points back at systemd-resolved, which
+	// forwards here, which would be a resolution loop.
+	b.WriteString("no-resolv\n")
+	b.WriteString("cache-size=1000\n")
+	b.WriteString("servers-file=" + serversFile + "\n")
+	return []byte(b.String())
+}
+
+// renderServers builds the hot-reloadable upstream list.
+func renderServers(entries []Entry, fallback []string) []byte {
+	var b strings.Builder
+	b.WriteString("# Managed by dual-vpn. Reloaded on SIGHUP.\n")
+	for _, e := range entries {
+		for _, s := range e.Servers {
+			fmt.Fprintf(&b, "server=/%s/%s\n", e.Domain, s)
+		}
+	}
+	// Bare server= lines catch everything not matched by a domain above.
+	for _, s := range fallback {
+		fmt.Fprintf(&b, "server=%s\n", s)
+	}
+	return []byte(b.String())
+}
+
+// renderResolved points systemd-resolved at dnsmasq for all names. Routing the
+// whole namespace here keeps per-domain changes inside dnsmasq, so resolved
+// never needs restarting when a domain is toggled.
+func renderResolved(listenAddr string) []byte {
+	var b strings.Builder
+	b.WriteString("# Managed by dual-vpn. Do not edit.\n")
+	b.WriteString("[Resolve]\n")
+	b.WriteString("DNS=" + listenAddr + "\n")
+	b.WriteString("Domains=~.\n")
+	return []byte(b.String())
+}
+
+// writeIfChanged writes atomically and reports whether the content differed.
+func writeIfChanged(path string, data []byte, perm os.FileMode) (bool, error) {
+	if existing, err := os.ReadFile(path); err == nil && bytes.Equal(existing, data) {
+		return false, nil
+	}
+
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return false, err
+	}
+	tmp, err := os.CreateTemp(dir, ".dual-vpn-*")
+	if err != nil {
+		return false, err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return false, err
+	}
+	if err := tmp.Chmod(perm); err != nil {
+		tmp.Close()
+		return false, err
+	}
+	if err := tmp.Close(); err != nil {
+		return false, err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// Apply converges DNS on the given entries, reloading rather than restarting
+// whenever only the upstream list changed.
+func (m *Manager) Apply(ctx context.Context, listenAddr string, entries []Entry, fallback []string) error {
+	baseChanged, err := writeIfChanged(m.BaseConfig, renderBase(listenAddr, m.ServersFile), 0o644)
+	if err != nil {
+		return fmt.Errorf("write dnsmasq config: %w", err)
+	}
+	if _, err := writeIfChanged(m.ServersFile, renderServers(entries, fallback), 0o644); err != nil {
+		return fmt.Errorf("write servers file: %w", err)
+	}
+
+	resolvedChanged, err := writeIfChanged(m.ResolvedDrop, renderResolved(listenAddr), 0o644)
+	if err != nil {
+		return fmt.Errorf("write resolved drop-in: %w", err)
+	}
+
+	switch {
+	case baseChanged || !m.Running(ctx):
+		if _, err := run(ctx, "systemctl", "restart", "dnsmasq"); err != nil {
+			return fmt.Errorf("restart dnsmasq: %w", err)
+		}
+	default:
+		if err := m.Reload(ctx); err != nil {
+			return err
+		}
+	}
+
+	if resolvedChanged {
+		if _, err := run(ctx, "systemctl", "restart", "systemd-resolved"); err != nil {
+			return fmt.Errorf("restart systemd-resolved: %w", err)
+		}
+	}
+	return nil
+}
+
+// Reload makes dnsmasq re-read the servers file without dropping its cache
+// or its listening socket.
+func (m *Manager) Reload(ctx context.Context) error {
+	if _, err := run(ctx, "systemctl", "reload", "dnsmasq"); err != nil {
+		return fmt.Errorf("reload dnsmasq: %w", err)
+	}
+	return nil
+}
+
+func (m *Manager) Running(ctx context.Context) bool {
+	out, err := exec.CommandContext(ctx, "systemctl", "is-active", "dnsmasq").CombinedOutput()
+	// is-active exits non-zero for inactive, so trust the payload rather than err.
+	_ = err
+	return strings.TrimSpace(string(out)) == "active"
+}
+
+// Cleanup removes our configuration and hands DNS back to systemd-resolved.
+func (m *Manager) Cleanup(ctx context.Context) error {
+	var errs []string
+
+	for _, p := range []string{m.BaseConfig, m.ServersFile, m.ResolvedDrop} {
+		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+			errs = append(errs, fmt.Sprintf("remove %s: %s", p, err))
+		}
+	}
+	if _, err := run(ctx, "systemctl", "stop", "dnsmasq"); err != nil {
+		errs = append(errs, fmt.Sprintf("stop dnsmasq: %s", err))
+	}
+	// Restoring resolved's own configuration is what puts DNS back; we never
+	// touched /etc/resolv.conf, so there is nothing else to undo.
+	if _, err := run(ctx, "systemctl", "restart", "systemd-resolved"); err != nil {
+		errs = append(errs, fmt.Sprintf("restart systemd-resolved: %s", err))
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("dns cleanup: %s", strings.Join(errs, "; "))
+	}
+	return nil
 }

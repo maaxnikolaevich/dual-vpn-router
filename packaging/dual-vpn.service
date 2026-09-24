@@ -1,0 +1,27 @@
+[Unit]
+Description=dual-vpn routing and split-DNS daemon
+Documentation=https://github.com/maks/dual-vpn-router
+After=network.target systemd-resolved.service
+Wants=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/dual-vpn daemon --socket-group dual-vpn
+Restart=on-failure
+RestartSec=2
+
+# Creates /run/dual-vpn for the control socket and /var/lib/dual-vpn for the
+# servers file and the active marker.
+RuntimeDirectory=dual-vpn
+RuntimeDirectoryMode=0755
+StateDirectory=dual-vpn
+StateDirectoryMode=0755
+
+# The daemon reconfigures routing, iptables and DNS, so it needs real root.
+# It is not sandboxed beyond this on purpose: NET_ADMIN plus writes to
+# /etc/dnsmasq.d and /etc/systemd/resolved.conf.d are inherent to the job.
+AmbientCapabilities=CAP_NET_ADMIN
+NoNewPrivileges=no
+
+[Install]
+WantedBy=multi-user.target

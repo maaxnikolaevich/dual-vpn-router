@@ -1,250 +1,375 @@
+// Package routing installs policy-based routing so individual destinations can
+// be steered into per-tunnel routing tables.
+//
+// Two deliberate safety properties:
+//
+//   - Tables are addressed by numeric id only. Nothing is ever written to
+//     /etc/iproute2/rt_tables, so a crash can never corrupt a system file.
+//   - Every ip rule this package creates lives in a reserved priority band, and
+//     every iptables rule lives in a dedicated chain. Cleanup therefore never
+//     has to guess which rules belong to the system.
 package routing
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
+	"net"
 	"os/exec"
+	"sort"
+	"strconv"
 	"strings"
 )
 
-// PBR manages Policy Based Routing
-type PBR struct {
-	TableName string
-	TableID   int
-	rtTables  string
-}
+const (
+	// FwmarkPrio sits above the CIDR band so marked DNS traffic is matched first.
+	FwmarkPrio = 9000
+	// CIDRPrioBase is offset by prefix length so specific routes beat general ones.
+	CIDRPrioBase = 10000
 
-// NewPBR creates a new PBR manager
-func NewPBR(tableName string, tableID int) *PBR {
-	return &PBR{
-		TableName: tableName,
-		TableID:   tableID,
-		rtTables:  "/etc/iproute2/rt_tables",
-	}
-}
+	// PrioMin and PrioMax bound the band this package owns exclusively.
+	PrioMin = 9000
+	PrioMax = 10999
 
-// Setup sets up PBR rules and routes
-func (p *PBR) Setup(corpGateway, globalGateway string, corpNetworks, corpDNS []string) error {
-	// 1. Add routing table to rt_tables
-	if err := p.addRoutingTable(); err != nil {
-		return fmt.Errorf("failed to add routing table: %w", err)
-	}
+	// MangleChain isolates our iptables rules from everything else on the host.
+	MangleChain = "DUALVPN"
+)
 
-	// 2. Add default route in corp table
-	if err := p.addDefaultRoute(corpGateway); err != nil {
-		return fmt.Errorf("failed to add default route: %w", err)
-	}
+type Manager struct{}
 
-	// 3. Add routes to corp DNS servers
-	for _, dns := range corpDNS {
-		if err := p.addDNSRoute(dns); err != nil {
-			// Log warning but continue - route might already exist
-			fmt.Printf("Warning: failed to add DNS route for %s: %v\n", dns, err)
-		}
-	}
+func New() *Manager { return &Manager{} }
 
-	// 4. Add rules for corp networks
-	for _, network := range corpNetworks {
-		if err := p.addNetworkRule(network); err != nil {
-			return fmt.Errorf("failed to add network rule: %w", err)
-		}
-	}
-
-	// 5. Mark DNS packets and add fwmark rule
-	if err := p.markDNSPackets(corpDNS); err != nil {
-		return fmt.Errorf("failed to mark DNS packets: %w", err)
-	}
-
-	if err := p.addFwmarkRule(); err != nil {
-		return fmt.Errorf("failed to add fwmark rule: %w", err)
-	}
-
-	return nil
-}
-
-// Cleanup cleans up PBR rules and routes
-// Only removes dual-vpn specific rules, not system rules
-func (p *PBR) Cleanup() error {
-	// Remove rules for our table specifically
-	output, err := exec.Command("ip", "rule", "list").CombinedOutput()
-	if err == nil {
-		lines := strings.Split(string(output), "\n")
-		for _, line := range lines {
-			if strings.TrimSpace(line) == "" {
-				continue
-			}
-			// Remove rules that use our table
-			if strings.Contains(line, "lookup") && strings.Contains(line, p.TableName) {
-				parts := strings.Fields(line)
-				if len(parts) >= 2 {
-					// Skip priority, use the rest
-					args := []string{"rule", "del"}
-					for i := 1; i < len(parts); i++ {
-						args = append(args, parts[i])
-					}
-					_ = exec.Command("ip", args...).Run()
-				}
-			}
-		}
-	}
-
-	// Flush corp table only
-	_ = exec.Command("ip", "route", "flush", "table", p.TableName).Run()
-
-	// Remove our DNS marking rules from mangle
-	p.removeDNSMarkRules()
-
-	return nil
-}
-
-// removeDNSMarkRules removes DNS marking rules from iptables mangle
-func (p *PBR) removeDNSMarkRules() {
-	// Remove from OUTPUT chain
-	p.removeMangleRules("OUTPUT", "-d", "53")
-
-	// Remove fwmark rule for our table
-	output, _ := exec.Command("ip", "rule", "list").CombinedOutput()
-	lines := strings.Split(string(output), "\n")
-	for _, line := range lines {
-		if strings.Contains(line, "fwmark 1") && strings.Contains(line, "lookup") && strings.Contains(line, p.TableName) {
-			_ = exec.Command("ip", "rule", "del", "fwmark", "1", "lookup", p.TableName).Run()
-		}
-	}
-}
-
-// removeMangleRules removes mangle rules matching pattern
-func (p *PBR) removeMangleRules(chain string, patterns ...string) {
-	output, _ := exec.Command("iptables", "-t", "mangle", "-L", chain, "--line-numbers").CombinedOutput()
-	lines := strings.Split(string(output), "\n")
-
-	// Collect line numbers to delete (in reverse order)
-	var lineNumbers []int
-	for _, line := range lines {
-		match := true
-		for _, pattern := range patterns {
-			if !strings.Contains(line, pattern) {
-				match = false
-				break
-			}
-		}
-		if match && strings.Contains(line, "MARK") {
-			parts := strings.Fields(line)
-			if len(parts) > 0 {
-				var num int
-				if _, err := fmt.Sscanf(parts[0], "%d", &num); err == nil {
-					lineNumbers = append(lineNumbers, num)
-				}
-			}
-		}
-	}
-
-	// Delete in reverse order to maintain line numbers
-	for i := len(lineNumbers) - 1; i >= 0; i-- {
-		_ = exec.Command("iptables", "-t", "mangle", "-D", chain, fmt.Sprintf("%d", lineNumbers[i])).Run()
-	}
-}
-
-// addRoutingTable adds the routing table to /etc/iproute2/rt_tables
-func (p *PBR) addRoutingTable() error {
-	// Check if table already exists
-	output, err := exec.Command("grep", p.TableName, p.rtTables).CombinedOutput()
-	if err == nil && len(output) > 0 {
-		return nil // Already exists
-	}
-
-	// Add table
-	return exec.Command("sh", "-c",
-		fmt.Sprintf("echo '%d %s' >> %s", p.TableID, p.TableName, p.rtTables),
-	).Run()
-}
-
-// RemoveRoutingTable removes the routing table from /etc/iproute2/rt_tables
-func (p *PBR) RemoveRoutingTable() error {
-	output, _ := exec.Command("grep", "-v", p.TableName, p.rtTables).CombinedOutput()
-	return exec.Command("sh", "-c", fmt.Sprintf("echo '%s' > %s", string(output), p.rtTables)).Run()
-}
-
-// addDefaultRoute adds default route to corp table
-func (p *PBR) addDefaultRoute(gateway string) error {
-	return exec.Command("ip", "route", "add", "default", "via", gateway, "table", p.TableName).Run()
-}
-
-// addDNSRoute adds route to DNS server
-func (p *PBR) addDNSRoute(dns string) error {
-	return exec.Command("ip", "route", "add", dns, "table", p.TableName).Run()
-}
-
-// addNetworkRule adds rule for corporate network
-func (p *PBR) addNetworkRule(network string) error {
-	output, err := exec.Command("ip", "rule", "add", "to", network, "lookup", p.TableName).CombinedOutput()
+func run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
 	if err != nil {
-		// Check if rule already exists
-		if strings.Contains(string(output), "RTNETLINK answers: File exists") {
-			return nil // Rule already exists, not an error
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			return out, err
 		}
-		return err
+		return out, fmt.Errorf("%s %s: %s: %s", name, strings.Join(args, " "), err, msg)
 	}
-	return nil
+	return out, nil
 }
 
-// markDNSPackets marks DNS packets destined to corp DNS
-func (p *PBR) markDNSPackets(corpDNS []string) error {
-	for _, dns := range corpDNS {
-		// Check if rule already exists (ignore error)
-		_ = exec.Command("iptables", "-t", "mangle", "-D", "OUTPUT",
-			"-p", "udp", "--dport", "53", "-d", dns,
-			"-j", "MARK", "--set-mark", "1").Run()
-		_ = exec.Command("iptables", "-t", "mangle", "-D", "OUTPUT",
-			"-p", "tcp", "--dport", "53", "-d", dns,
-			"-j", "MARK", "--set-mark", "1").Run()
-
-		// UDP
-		if err := exec.Command("iptables", "-t", "mangle", "-A", "OUTPUT",
-			"-p", "udp", "--dport", "53", "-d", dns,
-			"-j", "MARK", "--set-mark", "1").Run(); err != nil {
-			return err
-		}
-		// TCP
-		if err := exec.Command("iptables", "-t", "mangle", "-A", "OUTPUT",
-			"-p", "tcp", "--dport", "53", "-d", dns,
-			"-j", "MARK", "--set-mark", "1").Run(); err != nil {
-			return err
-		}
-	}
-	return nil
+// RuleSpec is one `ip rule` entry. Exactly one of To or Fwmark is set.
+type RuleSpec struct {
+	To      string
+	Fwmark  int
+	TableID int
 }
 
-// addFwmarkRule adds rule for marked packets
-func (p *PBR) addFwmarkRule() error {
-	output, err := exec.Command("ip", "rule", "add", "fwmark", "1", "lookup", p.TableName).CombinedOutput()
-	if err != nil {
-		// Check if rule already exists
-		if strings.Contains(string(output), "RTNETLINK answers: File exists") {
-			return nil // Rule already exists, not an error
-		}
-		return err
+func (r RuleSpec) priority() int {
+	if r.Fwmark != 0 {
+		return FwmarkPrio
 	}
-	return nil
+	// Longer prefixes get a numerically lower priority, so /32 is consulted
+	// before /8 regardless of the order rules were added.
+	ones := 0
+	if _, n, err := net.ParseCIDR(r.To); err == nil {
+		ones, _ = n.Mask.Size()
+	}
+	return CIDRPrioBase + (32 - ones)
 }
 
-// GetRouteTable returns the route table for the interface
-func (p *PBR) GetRouteTable(iface string) (map[string]string, error) {
-	output, err := exec.Command("ip", "route", "show", "dev", iface).CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get route table: %w", err)
+func (r RuleSpec) key() string {
+	if r.Fwmark != 0 {
+		return fmt.Sprintf("mark:%d:%d", r.Fwmark, r.TableID)
+	}
+	return fmt.Sprintf("to:%s:%d", normalizeCIDR(r.To), r.TableID)
+}
+
+// normalizeCIDR renders an address in the same form on both sides of a diff.
+// The kernel reports a host route as a bare address, config supplies /32.
+func normalizeCIDR(s string) string {
+	if s == "" {
+		return ""
+	}
+	if !strings.Contains(s, "/") {
+		if ip := net.ParseIP(s); ip != nil {
+			if ip.To4() != nil {
+				return s + "/32"
+			}
+			return s + "/128"
+		}
+		return s
+	}
+	if _, n, err := net.ParseCIDR(s); err == nil {
+		return n.String()
+	}
+	return s
+}
+
+type ipRule struct {
+	Priority int    `json:"priority"`
+	Dst      string `json:"dst"`
+	DstLen   *int   `json:"dstlen"`
+	Fwmark   string `json:"fwmark"`
+	Table    string `json:"table"`
+}
+
+func parseManagedRules(data []byte) ([]RuleSpec, error) {
+	var raw []ipRule
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, err
 	}
 
-	lines := strings.Split(string(output), "\n")
-	routes := make(map[string]string)
-
-	for _, line := range lines {
-		if line == "" {
+	var out []RuleSpec
+	for _, r := range raw {
+		if r.Priority < PrioMin || r.Priority > PrioMax {
 			continue
 		}
-		parts := strings.Fields(line)
-		if len(parts) >= 2 {
-			routes[parts[0]] = strings.Join(parts[1:], " ")
+		// Our tables are always numeric; a named table is not ours.
+		table, err := strconv.Atoi(r.Table)
+		if err != nil {
+			continue
+		}
+
+		spec := RuleSpec{TableID: table}
+		switch {
+		case r.Fwmark != "":
+			mark, err := strconv.ParseInt(strings.TrimPrefix(r.Fwmark, "0x"), 16, 64)
+			if err != nil {
+				continue
+			}
+			spec.Fwmark = int(mark)
+		case r.Dst != "" && r.Dst != "all":
+			dst := r.Dst
+			if r.DstLen != nil && !strings.Contains(dst, "/") {
+				dst = fmt.Sprintf("%s/%d", dst, *r.DstLen)
+			}
+			spec.To = normalizeCIDR(dst)
+		default:
+			continue
+		}
+		out = append(out, spec)
+	}
+	return out, nil
+}
+
+// ListManagedRules returns only the ip rules owned by this package.
+func (m *Manager) ListManagedRules(ctx context.Context) ([]RuleSpec, error) {
+	out, err := run(ctx, "ip", "-j", "rule", "show")
+	if err != nil {
+		return nil, fmt.Errorf("list ip rules: %w", err)
+	}
+	return parseManagedRules(out)
+}
+
+func (m *Manager) addRule(ctx context.Context, r RuleSpec) error {
+	args := []string{"rule", "add"}
+	if r.Fwmark != 0 {
+		args = append(args, "fwmark", strconv.Itoa(r.Fwmark))
+	} else {
+		args = append(args, "to", r.To)
+	}
+	args = append(args,
+		"lookup", strconv.Itoa(r.TableID),
+		"pref", strconv.Itoa(r.priority()),
+	)
+	_, err := run(ctx, "ip", args...)
+	return err
+}
+
+func (m *Manager) delRule(ctx context.Context, r RuleSpec) error {
+	args := []string{"rule", "del"}
+	if r.Fwmark != 0 {
+		args = append(args, "fwmark", strconv.Itoa(r.Fwmark))
+	} else {
+		args = append(args, "to", r.To)
+	}
+	args = append(args,
+		"lookup", strconv.Itoa(r.TableID),
+		"pref", strconv.Itoa(r.priority()),
+	)
+	_, err := run(ctx, "ip", args...)
+	return err
+}
+
+// ReconcileRules converges the managed priority band on the desired rule set,
+// touching only the entries that actually differ so live traffic is not dropped.
+func (m *Manager) ReconcileRules(ctx context.Context, desired []RuleSpec) error {
+	current, err := m.ListManagedRules(ctx)
+	if err != nil {
+		return err
+	}
+
+	want := make(map[string]RuleSpec, len(desired))
+	for _, r := range desired {
+		want[r.key()] = r
+	}
+	have := make(map[string]RuleSpec, len(current))
+	for _, r := range current {
+		have[r.key()] = r
+	}
+
+	// Add before delete: a destination stays reachable through the old rule
+	// until its replacement is in place.
+	var keys []string
+	for k := range want {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	var errs []string
+	for _, k := range keys {
+		if _, ok := have[k]; !ok {
+			if err := m.addRule(ctx, want[k]); err != nil {
+				errs = append(errs, err.Error())
+			}
 		}
 	}
 
-	return routes, nil
+	keys = keys[:0]
+	for k := range have {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	for _, k := range keys {
+		if _, ok := want[k]; !ok {
+			if err := m.delRule(ctx, have[k]); err != nil {
+				errs = append(errs, err.Error())
+			}
+		}
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("reconcile ip rules: %s", strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+// SetTableDefault points a table's default route at a tunnel. A gateway-less
+// tunnel (WireGuard and friends) is routed by device instead.
+func (m *Manager) SetTableDefault(ctx context.Context, tableID int, iface, gateway string) error {
+	if iface == "" {
+		return fmt.Errorf("table %d: no interface to route through", tableID)
+	}
+
+	args := []string{"route", "replace", "default"}
+	if gateway != "" {
+		args = append(args, "via", gateway)
+	}
+	args = append(args, "dev", iface, "table", strconv.Itoa(tableID))
+
+	if _, err := run(ctx, "ip", args...); err != nil {
+		return fmt.Errorf("set default route for table %d: %w", tableID, err)
+	}
+	return nil
+}
+
+// SetTableBlackhole makes a table drop everything it is asked to route. This
+// backs fail-closed rules: while the tunnel is down, matching traffic is
+// discarded rather than escaping through the default route.
+func (m *Manager) SetTableBlackhole(ctx context.Context, tableID int) error {
+	if _, err := run(ctx, "ip", "route", "replace", "blackhole", "default",
+		"table", strconv.Itoa(tableID)); err != nil {
+		return fmt.Errorf("blackhole table %d: %w", tableID, err)
+	}
+	return nil
+}
+
+// FlushTable empties one of our routing tables.
+func (m *Manager) FlushTable(ctx context.Context, tableID int) error {
+	// Flushing an already-empty table is not an error worth surfacing.
+	_, err := run(ctx, "ip", "route", "flush", "table", strconv.Itoa(tableID))
+	if err != nil && strings.Contains(err.Error(), "No such process") {
+		return nil
+	}
+	return err
+}
+
+// MarkSpec steers DNS queries for one server into a tunnel's table.
+type MarkSpec struct {
+	Server string
+	Mark   int
+}
+
+// EnsureChain creates the dedicated mangle chain and hooks it into OUTPUT once.
+func (m *Manager) EnsureChain(ctx context.Context) error {
+	if _, err := run(ctx, "iptables", "-t", "mangle", "-N", MangleChain); err != nil {
+		// The chain already existing is the expected steady state.
+		if !strings.Contains(err.Error(), "already exists") {
+			return fmt.Errorf("create mangle chain: %w", err)
+		}
+	}
+	// -C tests for the jump so repeated calls cannot stack duplicates.
+	if _, err := run(ctx, "iptables", "-t", "mangle", "-C", "OUTPUT", "-j", MangleChain); err != nil {
+		if _, err := run(ctx, "iptables", "-t", "mangle", "-A", "OUTPUT", "-j", MangleChain); err != nil {
+			return fmt.Errorf("hook mangle chain into OUTPUT: %w", err)
+		}
+	}
+	return nil
+}
+
+// SyncDNSMarks rewrites the mark rules. Flushing is safe because the chain
+// contains nothing but rules this package created.
+func (m *Manager) SyncDNSMarks(ctx context.Context, specs []MarkSpec) error {
+	if err := m.EnsureChain(ctx); err != nil {
+		return err
+	}
+	if _, err := run(ctx, "iptables", "-t", "mangle", "-F", MangleChain); err != nil {
+		return fmt.Errorf("flush mangle chain: %w", err)
+	}
+
+	for _, s := range specs {
+		for _, proto := range []string{"udp", "tcp"} {
+			_, err := run(ctx, "iptables", "-t", "mangle", "-A", MangleChain,
+				"-p", proto, "--dport", "53", "-d", s.Server,
+				"-j", "MARK", "--set-mark", strconv.Itoa(s.Mark))
+			if err != nil {
+				return fmt.Errorf("mark %s dns %s: %w", proto, s.Server, err)
+			}
+		}
+	}
+	return nil
+}
+
+// RemoveChain unhooks and deletes the mangle chain.
+func (m *Manager) RemoveChain(ctx context.Context) error {
+	var errs []string
+	// Unhook first so no packet can traverse a chain that is being deleted.
+	if _, err := run(ctx, "iptables", "-t", "mangle", "-C", "OUTPUT", "-j", MangleChain); err == nil {
+		if _, err := run(ctx, "iptables", "-t", "mangle", "-D", "OUTPUT", "-j", MangleChain); err != nil {
+			errs = append(errs, err.Error())
+		}
+	}
+	if _, err := run(ctx, "iptables", "-t", "mangle", "-F", MangleChain); err != nil {
+		if !strings.Contains(err.Error(), "No chain") {
+			errs = append(errs, err.Error())
+		}
+	}
+	if _, err := run(ctx, "iptables", "-t", "mangle", "-X", MangleChain); err != nil {
+		if !strings.Contains(err.Error(), "No chain") {
+			errs = append(errs, err.Error())
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("remove mangle chain: %s", strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+// Cleanup removes every trace of this package: managed rules, our tables, and
+// the mangle chain. It continues past individual failures so one wedged step
+// cannot strand the host in a half-configured state.
+func (m *Manager) Cleanup(ctx context.Context, tableIDs []int) error {
+	var errs []string
+
+	if err := m.ReconcileRules(ctx, nil); err != nil {
+		errs = append(errs, err.Error())
+	}
+	for _, id := range tableIDs {
+		if err := m.FlushTable(ctx, id); err != nil {
+			errs = append(errs, err.Error())
+		}
+	}
+	if err := m.RemoveChain(ctx); err != nil {
+		errs = append(errs, err.Error())
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("routing cleanup: %s", strings.Join(errs, "; "))
+	}
+	return nil
 }
